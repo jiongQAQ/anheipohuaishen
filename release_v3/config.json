@@ -1,0 +1,12 @@
+{
+    "software_a_path": "D:/5.12 法师最新版/VCHelper.vmp.exe",
+    "software_b_process": "Diablo IV.exe",
+    "redis_host": "118.145.197.212",
+    "redis_port": 6379,
+    "redis_password": "redis_AGZ8Gd",
+    "redis_db": 0,
+    "coordinates": [],
+    "click_interval": 2.0,
+    "monitor_interval": 30.0,
+    "max_retries": 5
+} 

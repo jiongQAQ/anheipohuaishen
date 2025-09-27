@@ -1,0 +1,20 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+
+# Logs
+*.log
+
+# Build artifacts
+build/
+dist/
+*.spec
+*.exe
+
+# IDE
+.idea/
