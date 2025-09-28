@@ -602,7 +602,17 @@ class MainWindow(QMainWindow):
             for i, account in enumerate(accounts):
                 self.account_table.setItem(i, 0, QTableWidgetItem(account["username"]))
                 self.account_table.setItem(i, 1, QTableWidgetItem(account["password"]))
-                status = "占用" if account.get("in_use", False) else "空闲"
+                if account.get("in_use", False):
+                    status = "占用"
+                elif account.get("status") == "cooldown" or account.get("cooldown_until") is not None:
+                    cooldown_until = account.get("cooldown_until")
+                    if isinstance(cooldown_until, (int, float)):
+                        remaining = int(max(0, cooldown_until - time.time()))
+                        status = f"冷却({remaining}s)"
+                    else:
+                        status = "冷却"
+                else:
+                    status = "空闲"
                 self.account_table.setItem(i, 2, QTableWidgetItem(status))
                 
         except Exception as e:
@@ -651,12 +661,16 @@ class MainWindow(QMainWindow):
             removed = result.get("removed", 0)
             available = result.get("available", 0)
             in_use = result.get("in_use", 0)
+            cooldown = result.get("cooldown", 0)
             QMessageBox.information(
                 self,
                 "去重完成",
-                f"已清理重复账号 {removed} 个\n可用账号: {available}\n使用中账号: {in_use}",
+                f"已清理重复账号 {removed} 个\n可用账号: {available}\n使用中账号: {in_use}\n冷却账号: {cooldown}",
             )
-            self.log(f"清理重复账号 {removed} 个，可用 {available} 个，使用中 {in_use} 个")
+            self.log(
+                f"清理重复账号 {removed} 个，可用 {available} 个，使用中 {in_use} 个，冷却 {cooldown} 个"
+            )
+
             self.refresh_accounts()
         except Exception as e:
             QMessageBox.critical(self, "去重失败", f"删除重复账号时发生错误: {str(e)}")
@@ -821,7 +835,7 @@ class TaskThread(QThread):
                 
                 if not self.window_controller.center_window(software_a_pid):
                     self.log_signal.emit("无法找到软件A窗口，释放账号并重试...")
-                    self.account_manager.release_account(account, pool_key)
+                    self.account_manager.release_account(account, pool_key, cooldown_seconds=30)
                     self.window_controller.terminate_process(software_a_pid)
                     continue
                 
@@ -858,15 +872,15 @@ class TaskThread(QThread):
 
                             # 🕐 记录软件B开始运行时间
                             self.runtime_logger.record_start()
-                            time.sleep(20)
-                            self.log_signal.emit("等待20再释放账号...")
+                            self.log_signal.emit("等待40秒后释放账号...")
+                            time.sleep(40)
                         else:
                             self.log_signal.emit("软件B未启动，准备切换账号...")
                             retry_count += 1
                     
                     # 如果1次尝试都失败，释放当前账号，重新开始流程
                     if not b_started and retry_count >= 1:
-                        self.account_manager.release_account(account, pool_key)
+                        self.account_manager.release_account(account, pool_key, cooldown_seconds=30)
                         account_switch_count += 1
                         self.log_signal.emit(f"🔄 当前账号1次尝试失败，释放账号并切换到第{account_switch_count + 1}个账号...")
                         
@@ -898,7 +912,7 @@ class TaskThread(QThread):
                         # 窗口居中
                         if not self.window_controller.center_window(software_a_pid):
                             self.log_signal.emit("❌ 软件A窗口居中失败，释放账号并继续...")
-                            self.account_manager.release_account(account, pool_key)
+                            self.account_manager.release_account(account, pool_key, cooldown_seconds=30)
                             continue
                         
                         # 重新获取窗口句柄并设置坐标
@@ -914,7 +928,7 @@ class TaskThread(QThread):
                 if b_started:
                     # 释放当前账号
                     self.log_signal.emit("🔓 释放当前账号...")
-                    self.account_manager.release_account(account, pool_key)
+                    self.account_manager.release_account(account, pool_key, cooldown_seconds=5)
                     
                     # 【修正】无论首次还是后续，软件B启动后都关闭重启软件A
                     self.log_signal.emit("🚪 软件B已启动，关闭当前软件A...")
@@ -951,7 +965,7 @@ class TaskThread(QThread):
                 else:
                     # 首次启动失败，释放账号并重新开始
                     self.log_signal.emit("软件B首次启动失败，释放账号并重新开始...")
-                    self.account_manager.release_account(account, pool_key)
+                    self.account_manager.release_account(account, pool_key, cooldown_seconds=30)
                     self.window_controller.terminate_process(software_a_pid)
                     
             except Exception as e:
@@ -1029,9 +1043,11 @@ class TaskThread(QThread):
                             
                             # 🕐 记录软件B重新开始运行时间
                             self.runtime_logger.record_start()
-                            
+                            self.log_signal.emit("等待40秒后释放账号...")
+                            time.sleep(40)
+
                             # 释放账号
-                            self.account_manager.release_account(account, pool_key)
+                            self.account_manager.release_account(account, pool_key, cooldown_seconds=5)
                             
                             # 【修改】关闭当前软件A并重新启动
                             self.log_signal.emit("🚪 关闭当前软件A...")
@@ -1066,13 +1082,13 @@ class TaskThread(QThread):
                         else:
                             self.log_signal.emit("❌ 软件B未能重新启动，任务完成")
                             # 释放账号并关闭软件A
-                            self.account_manager.release_account(account, pool_key)
+                            self.account_manager.release_account(account, pool_key, cooldown_seconds=30)
                             self.window_controller.terminate_process(software_a_pid)
                             return  # 退出待机循环，回到主循环
                             
                     except Exception as e:
                         self.log_signal.emit(f"❌ 点击执行失败: {str(e)}")
-                        self.account_manager.release_account(account, pool_key)
+                        self.account_manager.release_account(account, pool_key, cooldown_seconds=30)
                         continue
                         
             except Exception as e:
@@ -1093,4 +1109,3 @@ if __name__ == "__main__":
     window = MainWindow()
     window.show()
     sys.exit(app.exec_()) 
-
